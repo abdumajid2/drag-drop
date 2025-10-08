@@ -2,46 +2,61 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useGetUsersQuery } from "../store/api";
 
-export default function DashboardKanbanSimple() {
-  const STORAGE_KEY = "kanban_simple_v1";
+function DragBoard() {
+  const KEY = "kanban_simple_v1";
   const { data: users, isLoading } = useGetUsersQuery();
 
-  const [board, setBoard] = useState({
-    todo: [],
-    inprogress: [],
-    done: [],
-  });
-
+  const [board, setBoard] = useState({ todo: [], inprogress: [], done: [] });
   const dragging = useRef({ col: null, index: null });
   const [hoverCol, setHoverCol] = useState(null);
+  function isArr(a) {
+    return a && a.constructor === [].constructor;
+  }
 
-  // читаем из localStorage после прихода users
   useEffect(() => {
-    if (!Array.isArray(users)) return;
-
+    if (!users || typeof users.length !== "number") return;
     const byId = {};
-    users.forEach((u) => (byId[String(u.id)] = u));
-
+    for (let i = 0; i < users.length; i++) {
+      const u = users[i];
+      byId[(u && u.id) + ""] = u;
+    }
     let saved = null;
     try {
-      saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      const raw = localStorage.getItem(KEY);
+      if (raw) saved = JSON.parse(raw);
     } catch {}
-
+    function toList(arr) {
+      if (!isArr(arr)) return [];
+      const res = [];
+      for (let i = 0; i < arr.length; i++) {
+        const item = byId[arr[i] + ""];
+        if (item != null) res.push(item);
+      }
+      return res;
+    }
     if (saved && typeof saved === "object") {
-      const todo = Array.isArray(saved.todo) ? saved.todo.map((id) => byId[String(id)]).filter(Boolean) : [];
-      const inprogress = Array.isArray(saved.inprogress) ? saved.inprogress.map((id) => byId[String(id)]).filter(Boolean) : [];
-      const done = Array.isArray(saved.done) ? saved.done.map((id) => byId[String(id)]).filter(Boolean) : [];
-
-      const onBoard = new Set([...todo, ...inprogress, ...done].map((u) => String(u.id)));
-      const rest = users.filter((u) => !onBoard.has(String(u.id)));
-
-      setBoard({ todo: [...todo, ...rest], inprogress, done });
+      const todo = toList(saved.todo);
+      const inprogress = toList(saved.inprogress);
+      const done = toList(saved.done);
+      const onBoard = {};
+      for (let i = 0; i < todo.length; i++) onBoard[todo[i].id + ""] = 1;
+      for (let i = 0; i < inprogress.length; i++)
+        onBoard[inprogress[i].id + ""] = 1;
+      for (let i = 0; i < done.length; i++) onBoard[done[i].id + ""] = 1;
+      const rest = [];
+      for (let i = 0; i < users.length; i++) {
+        const idStr = users[i].id + "";
+        if (!onBoard[idStr]) rest.push(users[i]);
+      }
+      setBoard({ todo: todo.concat(rest), inprogress, done });
     } else {
-      setBoard({ todo: users, inprogress: [], done: [] });
+      setBoard({
+        todo: users.slice ? users.slice() : users,
+        inprogress: [],
+        done: [],
+      });
     }
   }, [users]);
-
-  // сохраняем только id
   useEffect(() => {
     const data = {
       todo: board.todo.map((u) => u.id),
@@ -49,38 +64,38 @@ export default function DashboardKanbanSimple() {
       done: board.done.map((u) => u.id),
     };
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(KEY, JSON.stringify(data));
     } catch {}
   }, [board]);
 
   function resetBoard() {
-    if (Array.isArray(users)) {
-      setBoard({ todo: users, inprogress: [], done: [] });
+    if (users && typeof users.length === "number") {
+      setBoard({
+        todo: users.slice ? users.slice() : users,
+        inprogress: [],
+        done: [],
+      });
     } else {
       setBoard({ todo: [], inprogress: [], done: [] });
     }
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(KEY);
   }
 
-  // DnD
+  // --- DnD ---
   function onDragStart(col, index) {
     return () => {
       dragging.current = { col, index };
     };
   }
-
   function onDragOver(col) {
     return (e) => {
       e.preventDefault();
       setHoverCol(col);
     };
   }
-
   function clearHover() {
     setHoverCol(null);
   }
-
-  // бросили на карточку — вставить перед ней
   function onDropOnCard(destCol, destIndex) {
     return (e) => {
       e.preventDefault();
@@ -89,17 +104,20 @@ export default function DashboardKanbanSimple() {
 
       setBoard((prev) => {
         const next = {
-          todo: [...prev.todo],
-          inprogress: [...prev.inprogress],
-          done: [...prev.done],
+          todo: prev.todo.slice(),
+          inprogress: prev.inprogress.slice(),
+          done: prev.done.slice(),
         };
 
         const srcList = next[from.col];
-        const [item] = srcList.splice(from.index, 1);
+        const movedArr = srcList.splice(from.index, 1);
+        const item = movedArr[0];
 
         const dstList = destCol === from.col ? srcList : next[destCol];
         const insertIndex =
-          destCol === from.col && from.index < destIndex ? destIndex - 1 : destIndex;
+          destCol === from.col && from.index < destIndex
+            ? destIndex - 1
+            : destIndex;
 
         dstList.splice(insertIndex, 0, item);
 
@@ -112,7 +130,6 @@ export default function DashboardKanbanSimple() {
       clearHover();
     };
   }
-
   function onDropAtEnd(destCol) {
     return (e) => {
       e.preventDefault();
@@ -121,13 +138,14 @@ export default function DashboardKanbanSimple() {
 
       setBoard((prev) => {
         const next = {
-          todo: [...prev.todo],
-          inprogress: [...prev.inprogress],
-          done: [...prev.done],
+          todo: prev.todo.slice(),
+          inprogress: prev.inprogress.slice(),
+          done: prev.done.slice(),
         };
 
         const srcList = next[from.col];
-        const [item] = srcList.splice(from.index, 1);
+        const movedArr = srcList.splice(from.index, 1);
+        const item = movedArr[0];
 
         const dstList = destCol === from.col ? srcList : next[destCol];
         dstList.push(item);
@@ -142,9 +160,7 @@ export default function DashboardKanbanSimple() {
     };
   }
 
-  if (isLoading) {
-    return <div className="p-4">Loading...</div>;
-  }
+  if (isLoading) return <div className="p-4">Loading...</div>;
 
   function Column({ title, colKey, items }) {
     return (
@@ -158,10 +174,12 @@ export default function DashboardKanbanSimple() {
           onDragOver={onDragOver(colKey)}
           onDrop={onDropAtEnd(colKey)}
           onDragLeave={clearHover}
-          className={[
-            "min-h-40 rounded-xl border border-dashed p-2 transition-colors",
-            hoverCol == colKey ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white",
-          ]}
+          className={
+            "min-h-40 rounded-xl border border-dashed p-2 transition-colors " +
+            (hoverCol === colKey
+              ? "border-indigo-400 bg-indigo-50"
+              : "border-slate-200 bg-white")
+          }
         >
           {items.map((u, i) => (
             <div key={u.id} className="mb-2 last:mb-0">
@@ -189,7 +207,8 @@ export default function DashboardKanbanSimple() {
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
                   <span>
-                    Последнее действие: <b className="text-slate-700">сегодня</b>
+                    Последнее действие:{" "}
+                    <b className="text-slate-700">сегодня</b>
                   </span>
                   <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">
                     Активен
@@ -198,6 +217,11 @@ export default function DashboardKanbanSimple() {
               </div>
             </div>
           ))}
+          {(!items || items.length === 0) && (
+            <div className="text-xs text-slate-400">
+              Перетащите карточки сюда
+            </div>
+          )}
         </div>
       </div>
     );
@@ -215,15 +239,23 @@ export default function DashboardKanbanSimple() {
             Сбросить
           </button>
         </div>
+
         <div className="mb-3 text-xs text-slate-600">
           Дата: <b>{new Date().toLocaleDateString()}</b>
         </div>
+
         <div className="grid gap-3 md:grid-cols-3">
           <Column title="To Do" colKey="todo" items={board.todo} />
-          <Column title="In Progress" colKey="inprogress" items={board.inprogress} />
+          <Column
+            title="In Progress"
+            colKey="inprogress"
+            items={board.inprogress}
+          />
           <Column title="Done" colKey="done" items={board.done} />
         </div>
       </div>
     </div>
   );
 }
+
+export default React.memo(DragBoard);
